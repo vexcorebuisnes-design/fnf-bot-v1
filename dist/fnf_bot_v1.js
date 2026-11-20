@@ -73,8 +73,8 @@ var cfg = {
     on: true,
     mode: "AUTO",
     missChance: 0,
-    advanceMs: 80,
-    hitWindowMs: 60,
+    advanceMs: 60,
+    hitWindowMs: 50,
     keyHoldMs: 45,
     holdReleaseExtraMs: 160,
     gapMs: 12,
@@ -94,6 +94,7 @@ var KEYNAMES = {
     32: ["Space", " "]
 };
 var keyActive = [], keyToken = [];
+var pendingPresses = [];
 function ringReset() { keyActive = []; keyToken = []; }
 function fireKey(dir, down) {
     var code = KEYCODES[dir];
@@ -130,6 +131,7 @@ function releaseAllKeys() {
     for (var i = 0; i < KEYCODES.length; i++) {
         if (keyActive[i]) { keyActive[i] = 0; fireKey(i, false); }
     }
+    pendingPresses = [];
 }
 var audioEl = null;
 var waState = { ctx: null, startAt: 0, offset: 0, dur: 0, src: null, wall: 0 };
@@ -292,7 +294,7 @@ function setLevel(l) {
     if (chart.level === l) return;
     chart = { done: false, notes: [], level: l || "", types: {}, ring: false, bpm: 0, speed: 1, secStarts: [] };
     stats.hits = stats.misses = stats.dodged = stats.played = 0;
-    releaseAllKeys(); ringReset(); gen++;
+    releaseAllKeys(); ringReset(); gen++; pendingPresses = [];
 }
 function isFlatArr(a) {
     if (!a || !a.length) return false;
@@ -935,48 +937,45 @@ function pressNote(dir, atMs, len, tNext, g) {
         var capK = (tNext != null) ? Math.max(0, tNext - atMs - cfg.gapMs) : cfg.keyHoldMs;
         keep = (capK < 8) ? Math.max(0, capK) : Math.min(cfg.keyHoldMs, capK);
     }
-    var pressed = false, token = 0, keepUntil = atMs + keep;
+    var keepUntil = atMs + keep;
     if (tNext != null) {
         var capRel = tNext - 34;
         if (capRel < atMs + 6) capRel = atMs + 6;
         if (capRel < keepUntil) keepUntil = capRel;
     }
-    function schedule(delay) {
-        if (cfg.autoSync) setTimeout(tick, Math.max(0, delay));
-        else requestAnimationFrame(tick);
-    }
-    function tick() {
-        if (!cfg.on || g !== gen) return;
-        if (pressed && token !== keyToken[dir]) return;
-        var t = nowMs();
-        if (t == null) { schedule(8); return; }
-        if (!pressed) {
-            var th = atMs + cfg.calibMs;
-            if (t >= th) {
-                pressed = true;
-                if (keyActive[dir] > 0) fireKey(dir, false);
-                token = ++keyToken[dir];
-                fireKey(dir, true);
-                keyActive[dir] = 1;
-                schedule(1);
-                return;
+    pendingPresses.push({
+        dir: dir, fireAt: atMs + cfg.calibMs, keepUntil: keepUntil,
+        pressed: false, token: 0, g: g, done: false
+    });
+}
+function processPendingPresses() {
+    if (!cfg.on) return;
+    var t = nowMs();
+    if (t == null) return;
+    for (var i = pendingPresses.length - 1; i >= 0; i--) {
+        var p = pendingPresses[i];
+        if (p.g !== gen) { pendingPresses.splice(i, 1); continue; }
+        if (p.done) { pendingPresses.splice(i, 1); continue; }
+        if (!p.pressed) {
+            if (t >= p.fireAt) {
+                p.pressed = true;
+                if (keyActive[p.dir] > 0) fireKey(p.dir, false);
+                p.token = ++keyToken[p.dir];
+                fireKey(p.dir, true);
+                keyActive[p.dir] = 1;
             }
-            var wait = th - t;
-            schedule(wait > 4 ? Math.max(1, Math.floor(wait - 2)) : 1);
-            return;
-        }
-        if (t >= keepUntil) {
-            if (token === keyToken[dir]) {
-                keyActive[dir] = 0;
-                fireKey(dir, false);
-                keyToken[dir]++;
+        } else {
+            if (t >= p.keepUntil) {
+                if (p.token === keyToken[p.dir]) {
+                    keyActive[p.dir] = 0;
+                    fireKey(p.dir, false);
+                    keyToken[p.dir]++;
+                }
+                p.done = true;
+                pendingPresses.splice(i, 1);
             }
-            return;
         }
-        var rem = keepUntil - t;
-        schedule(rem > 4 ? Math.max(1, Math.floor(rem - 2)) : 1);
     }
-    schedule(1);
 }
 function synthStep() {
     if (!chart.done || !chart.notes.length) return;
@@ -1020,6 +1019,7 @@ function resync(t) {
     gen++;
     releaseAllKeys();
     ringReset();
+    pendingPresses = [];
     if (chart.notes.length) {
         for (var i = 0; i < chart.notes.length; i++) {
             chart.notes[i].done = (chart.notes[i].time < t - (cfg.hitWindowMs + 80));
@@ -1042,7 +1042,7 @@ function loop() {
                     if (t < 3000) {
                         gen++;
                         if (chart.notes.length) for (var i = 0; i < chart.notes.length; i++) chart.notes[i].done = false;
-                        releaseAllKeys(); ringReset();
+                        releaseAllKeys(); ringReset(); pendingPresses = [];
                         console.log("[FNF_Bot_V1] restart rilevato");
                         if (cfg.learnFromDeath && wall > 4000) { try { learnFromDeath(4000); } catch (e1) {} }
                     } else {
@@ -1062,6 +1062,7 @@ function loop() {
                 directOk = directStep(t != null ? t : lastT);
             }
             if (!directOk) synthStep();
+            processPendingPresses();
             hpWatchTick();
             uiTick();
         } catch (e9) {
