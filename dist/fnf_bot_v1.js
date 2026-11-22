@@ -73,12 +73,12 @@ var cfg = {
     on: true,
     mode: "AUTO",
     missChance: 0,
-    advanceMs: 70,
+    advanceMs: 55,
     hitWindowMs: 45,
     keyHoldMs: 45,
     holdReleaseExtraMs: 160,
     gapMs: 12,
-    calibMs: -10,
+    calibMs: 0,
     autoSync: true,
     learnFromDeath: true,
     hpWatch: true,
@@ -983,7 +983,15 @@ function pressNote(dir, atMs, len, tNext, g) {
 function synthStep() {
     if (!chart.done || !chart.notes.length) return;
     var t = nowMs();
-    if (t == null) { if (lastT != null && lastT >= 0) t = lastT; else return; }
+    if (t == null) {
+        if (lastValidT >= 0 && lastValidWall > 0) {
+            t = lastValidT + (performance.now() - lastValidWall);
+        } else if (lastT != null && lastT >= 0) {
+            t = lastT;
+        } else {
+            return;
+        }
+    }
     if (t == null) return;
     for (var i = 0; i < chart.notes.length; i++) {
         var n = chart.notes[i];
@@ -1019,6 +1027,7 @@ function synthStep() {
     }
 }
 var lastT = -1, lastLoopWall = 0, frameMs = 16.7;
+var lastValidT = -1, lastValidWall = 0;
 function resync(t) {
     gen++;
     releaseAllKeys();
@@ -1058,6 +1067,8 @@ function loop() {
                     console.log("[FNF_Bot_V1] seek-fwd resync @" + Math.round(t));
                 }
                 lastT = t;
+                lastValidT = t;
+                lastValidWall = performance.now();
             }
             try { maybeActivateChart(); } catch (e2) {}
             if (cfg.mode !== "SYNTH") engineScan();
