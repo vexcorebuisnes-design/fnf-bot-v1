@@ -73,7 +73,7 @@ var cfg = {
     on: true,
     mode: "AUTO",
     missChance: 0,
-    advanceMs: 55,
+    advanceMs: 70,
     hitWindowMs: 45,
     keyHoldMs: 45,
     holdReleaseExtraMs: 160,
